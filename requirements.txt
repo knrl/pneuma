@@ -1,0 +1,6 @@
+# Core dependencies — matches pyproject.toml [project.dependencies]
+mcp>=1.0.0
+python-dotenv>=1.0.0
+mempalace>=2.0.0
+slack-sdk>=3.41.0
+pyyaml>=6.0

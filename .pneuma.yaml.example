@@ -1,0 +1,77 @@
+# .pneuma.yaml — Pneuma miner configuration
+#
+# Place this file at your project root as .pneuma.yaml (or .pneuma.json).
+# All fields are optional — omit any to keep the built-in default.
+# Requires: pip install -e .[yaml]  (PyYAML)
+
+miner:
+
+  # ── Chunk sizing ────────────────────────────────────────────────────────────
+  # These only affect the character-based fallback chunker.
+  # When tree-sitter is installed, chunks are split at symbol boundaries instead.
+
+  chunk_size: 1500        # Characters per stored chunk (default: 1500)
+  chunk_overlap: 150      # Overlap between consecutive chunks (default: 150)
+
+  # ── File limits ─────────────────────────────────────────────────────────────
+
+  max_file_size: 100000   # Skip files larger than this many bytes (default: 100000)
+  max_files: 5000         # Safety cap on total files per mine run (default: 5000)
+
+  # ── Parallelism ──────────────────────────────────────────────────────────────
+  # Number of files processed concurrently. Each worker chunks and embeds one
+  # file; sentence-transformers releases the GIL so workers genuinely run in
+  # parallel. Increase for large codebases; set to 1 to disable threading.
+
+  workers: 4              # default: 4 — raise to 8–16 for very large projects
+
+  # ── Gitignore integration ───────────────────────────────────────────────────
+  # When true, patterns from .gitignore at the project root are automatically
+  # treated as skip rules — vendor dirs, build output, etc.
+
+  respect_gitignore: true
+
+  # ── Skip patterns ───────────────────────────────────────────────────────────
+  # Gitignore-style globs matched against the file's path relative to the
+  # project root (forward slashes on all platforms).
+  # These are ADDED to the always-skipped built-in dirs:
+  #   .git, __pycache__, node_modules, .venv, dist, build, target, vendor, …
+
+  skip:
+    - "third_party/**"          # entire subtree
+    - "external/**"
+    - "**/*_generated.*"        # any generated file anywhere
+    - "docs/archive/**"         # old docs you don't want indexed
+    - "scripts/one_off/**"      # scratch scripts
+
+  # ── Generated file patterns ─────────────────────────────────────────────────
+  # Filename globs for auto-generated files that should never be embedded.
+  # Setting this key REPLACES the defaults — re-list any defaults you want kept.
+  # Defaults include: *.pb.go, *.pb.py, *.min.js, *.bundle.js, *.generated.*, …
+
+  generated:
+    - "*.pb.go"
+    - "*.pb.py"
+    - "*_pb2.py"
+    - "*_pb2_grpc.py"
+    - "*.min.js"
+    - "*.min.css"
+    - "*.bundle.js"
+    - "*.bundle.css"
+    - "*-bundle.js"
+    - "*.generated.*"
+    - "*_generated.*"
+    - "*.map"
+    # Add your own:
+    # - "*.auto.ts"
+    # - "schema_generated.go"
+
+  # ── Priority order ──────────────────────────────────────────────────────────
+  # Files matching these patterns are mined first.
+  # Useful so high-value docs appear early in retrieval results when scores tie.
+
+  priority:
+    - "README.md"
+    - "ARCHITECTURE.md"
+    - "docs/**"
+    - "src/main.*"

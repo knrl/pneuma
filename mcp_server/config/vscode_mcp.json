@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "pneuma": {
+      "type": "stdio",
+      "command": "/absolute/path/to/pneuma/.venv/bin/python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/absolute/path/to/pneuma",
+      "env": {
+        "PNEUMA_PROJECT": "/absolute/path/to/your/project"
+      }
+    }
+  }
+}

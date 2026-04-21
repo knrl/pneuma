@@ -1,0 +1,21 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Data (persistent, local-only)
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+.next/
+
+# OS
+Thumbs.db
+.DS_Store
