@@ -258,7 +258,7 @@ Stale entries removed: 3
 | Threshold | Default | Env Override |
 |-----------|---------|-------------|
 | Similarity | 0.92 | `REFACTOR_SIMILARITY_THRESHOLD` |
-| Stale days | 90 | `REFACTOR_STALE_DAYS` |
+| Stale days | 180 | `REFACTOR_STALE_DAYS` |
 
 ### `pneuma facts <entity> [--as-of DATE]`
 

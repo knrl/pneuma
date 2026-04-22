@@ -40,7 +40,7 @@ Built on [MemPalace](https://github.com/knrl/mempalace). Embeddings run locally.
 - Ingests Slack / Teams channels on demand (noise filter, PII strip, problem/solution extraction)
 - Routes content to the right part of the knowledge base automatically
 - Deduplicates and prunes stale entries automatically
-- Exposes 20 MCP tools to your IDE assistant and 23 CLI commands for you
+- Exposes 21 MCP tools to your IDE assistant and 23 CLI commands for you
 - Escalates to humans when retrieval confidence is too low
 
 ---

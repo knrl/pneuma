@@ -41,7 +41,7 @@ New here? Start with the [Getting Started guide](../getting-started.md).
 │  Pneuma (this project)                      │
 │                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-  │ CLI (23  │  │ MCP (20  │  │ Slack /  │ │
+  │ CLI (23  │  │ MCP (21  │  │ Slack /  │ │
 │  │ commands)│  │ tools)   │  │ Teams    │ │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘ │
 │       │              │              │       │
