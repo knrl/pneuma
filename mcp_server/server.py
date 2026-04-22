@@ -71,7 +71,20 @@ if _project_path:
     from core.palace import configure
     configure(_project_path)
 
-mcp = FastMCP(name="pneuma")
+mcp = FastMCP(
+    name="pneuma",
+    instructions=(
+        "You have access to Pneuma — a persistent memory and knowledge system for this project.\n\n"
+        "**Start every session** by calling `wake_up()` before answering any question. "
+        "This loads your agent identity and essential project context (~800 tokens).\n\n"
+        "**Use Pneuma tools proactively throughout the conversation:**\n"
+        "- `search_memory(query)` — before answering questions about architecture, past decisions, or technical history\n"
+        "- `save_knowledge(content)` — when the user shares a decision, constraint, or important fact\n"
+        "- `recall(wing, room)` — when you need deeper context on a specific area mid-conversation\n"
+        "- `write_diary(entry)` — at end of sessions to record what was worked on\n\n"
+        "Don't wait to be asked. The memory system only helps if you use it."
+    ),
+)
 
 # ── Memory tools (9) ────────────────────────────────────────────────
 from mcp_server.tools.memory_tools import (
