@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -29,6 +30,12 @@ AUTO_OPTIMIZE_EVERY_N_DAYS = 7
 
 # Keep strong references so GC doesn't discard running tasks
 _active_tasks: set[asyncio.Task] = set()
+
+# Serialises the read-modify-write cycle in bump_and_maybe_optimize so that
+# concurrent callers (e.g. multiple save_knowledge calls racing) cannot both
+# read save_count=49, both decide to trigger optimize, and fire two concurrent
+# optimize runs on the same ChromaDB instance.
+_state_lock = threading.Lock()
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -71,12 +78,14 @@ def _fire(label: str, fn, *args, **kwargs) -> None:
     try:
         loop = asyncio.get_event_loop()
         if not loop.is_running():
+            _log.debug("bg/%s: skipped — no running event loop", label)
             return
         task = loop.create_task(_run())
         _active_tasks.add(task)
         task.add_done_callback(_active_tasks.discard)
     except RuntimeError:
-        pass
+        _log.debug("bg/%s: skipped — could not get event loop", label)
+
 
 
 # ── Public triggers ──────────────────────────────────────────────────────────
@@ -120,25 +129,33 @@ def bump_and_maybe_optimize(n: int = 1) -> None:
     AUTO_OPTIMIZE_EVERY_N_SAVES, or AUTO_OPTIMIZE_EVERY_N_DAYS days have
     passed since the last optimize, fire a background dedup+stale cleanup.
     """
-    state = _read_state()
-    now = time.time()
+    with _state_lock:
+        state = _read_state()
+        now = time.time()
 
-    save_count = state.get("save_count", 0) + n
-    last_optimized = state.get("last_optimized", 0.0)
-    days_since = (now - last_optimized) / 86_400
+        save_count = state.get("save_count", 0) + n
+        last_optimized = state.get("last_optimized", 0.0)
+        days_since = (now - last_optimized) / 86_400
 
-    due_by_count = save_count >= AUTO_OPTIMIZE_EVERY_N_SAVES
-    due_by_time = days_since >= AUTO_OPTIMIZE_EVERY_N_DAYS
+        due_by_count = save_count >= AUTO_OPTIMIZE_EVERY_N_SAVES
+        due_by_time = days_since >= AUTO_OPTIMIZE_EVERY_N_DAYS
 
-    if due_by_count or due_by_time:
-        state["save_count"] = 0
-        state["last_optimized"] = now
+        if due_by_count or due_by_time:
+            state["save_count"] = 0
+            state["last_optimized"] = now
+            trigger_reason = "count" if due_by_count else "time"
+        else:
+            state["save_count"] = save_count
+            trigger_reason = None
+
         _write_state(state)
 
-        reason = "count" if due_by_count else "time"
+    # Schedule outside the lock — _fire is non-blocking and must not hold
+    # _state_lock while waiting for the event loop.
+    if trigger_reason is not None:
         _log.info(
             "bg/optimize: scheduling (trigger=%s, saves=%d, days_since=%.1f)",
-            reason, save_count, days_since,
+            trigger_reason, save_count, days_since,
         )
 
         def _do_optimize():
@@ -147,8 +164,6 @@ def bump_and_maybe_optimize(n: int = 1) -> None:
 
         _fire("optimize", _do_optimize)
     else:
-        state["save_count"] = save_count
-        _write_state(state)
         _log.debug(
             "bg/optimize: not due yet (saves=%d/%d, days=%.1f/%.0f)",
             save_count, AUTO_OPTIMIZE_EVERY_N_SAVES,

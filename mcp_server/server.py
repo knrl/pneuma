@@ -34,24 +34,35 @@ import core.env  # noqa: F401 — loads .env from Pneuma install root
 # MCP uses stdout for protocol framing, so we must never print to stdout.
 # Route logs to ~/.pneuma/mcp-server.log so `pneuma logs` can tail them.
 def _setup_logging() -> None:
+    _fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    root = logging.getLogger()
+    log_level = os.environ.get("PNEUMA_LOG_LEVEL", "INFO").upper()
+
     log_dir = Path(os.environ.get("PNEUMA_HOME", os.path.expanduser("~/.pneuma")))
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return  # Can't write logs — silently continue
-    log_path = log_dir / "mcp-server.log"
+        log_path = log_dir / "mcp-server.log"
+        handler: logging.Handler = logging.FileHandler(str(log_path), encoding="utf-8")
+    except OSError as exc:
+        # stdout is reserved for MCP framing — fall back to stderr so failures
+        # are visible rather than silently swallowed.
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(_fmt)
+        root.addHandler(handler)
+        root.setLevel(log_level)
+        logging.getLogger(__name__).warning(
+            "Could not open log file in %s (%s) — logging to stderr", log_dir, exc
+        )
+        return
 
-    handler = logging.FileHandler(str(log_path), encoding="utf-8")
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
-
-    root = logging.getLogger()
+    handler.setFormatter(_fmt)
     # Avoid duplicate handlers if main() is called repeatedly in tests
     if not any(getattr(h, "baseFilename", None) == str(log_path) for h in root.handlers):
         root.addHandler(handler)
-    root.setLevel(os.environ.get("PNEUMA_LOG_LEVEL", "INFO").upper())
+    root.setLevel(log_level)
 
     # Uncaught exceptions should land in the log (MCP protocol swallows stdout)
     def _excepthook(exc_type, exc_value, exc_tb):

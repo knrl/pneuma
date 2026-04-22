@@ -4,7 +4,46 @@ MCP Tools: Import — on-demand document and content ingestion.
 Single unified tool for importing files or pasted text into mempalace.
 """
 
+import os
+from pathlib import Path
+
 from core.ingestion.doc_parser import import_file, import_content as _import_content
+
+
+def _resolve_safe_path(file_path: str) -> tuple[Path, str | None]:
+    """Resolve path and verify it sits within an allowed root.
+
+    Allowed roots (checked in order):
+      1. PNEUMA_PROJECT env var (the configured project directory)
+      2. The user's home directory
+      3. Any colon-separated paths in PNEUMA_IMPORT_ROOTS
+
+    Returns (resolved_path, error_message). error_message is None on success.
+    """
+    try:
+        resolved = Path(file_path).resolve()
+    except Exception as exc:
+        return Path(file_path), f"Invalid file path: {exc}"
+
+    if not resolved.is_file():
+        return resolved, f"Not a regular file: {resolved}"
+
+    allowed: list[Path] = [Path.home()]
+    project = os.environ.get("PNEUMA_PROJECT", "")
+    if project:
+        allowed.append(Path(project).resolve())
+    for extra in os.environ.get("PNEUMA_IMPORT_ROOTS", "").split(os.pathsep):
+        if extra.strip():
+            allowed.append(Path(extra.strip()).resolve())
+
+    if not any(resolved.is_relative_to(root) for root in allowed):
+        roots_str = ", ".join(str(r) for r in allowed)
+        return resolved, (
+            f"Access denied: {resolved} is outside allowed directories "
+            f"({roots_str}). Set PNEUMA_IMPORT_ROOTS to allow additional paths."
+        )
+
+    return resolved, None
 
 
 async def import_content(
@@ -32,18 +71,21 @@ async def import_content(
         room: Target room. Leave empty for auto-routing.
     """
     if file_path:
+        resolved, err = _resolve_safe_path(file_path)
+        if err:
+            return err
         try:
             result = import_file(
-                path=file_path,
+                path=str(resolved),
                 doc_type=doc_type,
                 wing=wing,
                 room=room,
             )
         except FileNotFoundError:
-            return f"File not found: {file_path}"
+            return f"File not found: {resolved}"
         except Exception as exc:
             return f"Import failed: {exc}"
-        return _format_summary(result, source=file_path, bump=True)
+        return _format_summary(result, source=str(resolved), bump=True)
 
     if not content or not content.strip():
         return "Nothing to import — provide either file_path or content."
