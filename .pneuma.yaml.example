@@ -75,3 +75,36 @@ miner:
     - "ARCHITECTURE.md"
     - "docs/**"
     - "src/main.*"
+
+# ── Routing ──────────────────────────────────────────────────────────────────
+# Controls where save_knowledge and import_content route content automatically.
+#
+# rules: list of keyword → (wing, room) mappings, checked in order.
+#        First match wins. If you specify ANY rules here, the built-in rules
+#        are replaced entirely — copy the ones you want to keep.
+#
+# default: fallback wing/room for content that matches no rule.
+#          Omit to use the built-in default: [chat, general]
+#
+# Built-in rules (used when routing: is absent):
+#   escalate / help needed / blocked       → chat/escalations
+#   decided / decision / we agreed / …     → chat/decisions
+#   style guide / naming convention / …    → chat/conventions
+#   workaround / hack / temp fix / …       → chat/workarounds
+#   solution / solved / fixed / …          → chat/solutions
+#   (anything else)                        → chat/general
+
+# routing:
+#   rules:
+#     - keywords: ["decided", "decision", "we chose", "we agreed", "we're using"]
+#       target: [chat, decisions]
+#     - keywords: ["workaround", "hack", "temp fix", "hotfix"]
+#       target: [chat, workarounds]
+#     - keywords: ["solution", "solved", "fixed", "resolved"]
+#       target: [chat, solutions]
+#     - keywords: ["escalate", "blocked", "help needed", "stuck"]
+#       target: [chat, escalations]
+#     # Add your own vocabulary:
+#     # - keywords: ["rfc", "proposal", "we should consider"]
+#     #   target: [chat, decisions]
+#   default: [chat, general]

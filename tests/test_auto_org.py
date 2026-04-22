@@ -1,13 +1,22 @@
 """Tests for core/auto_org — content routing and duplicate detection."""
 
+import json
 import tempfile
+from pathlib import Path
 
 import pytest
 
-from core.auto_org.router import route, _keyword_match
+from core.auto_org.router import (
+    route,
+    _keyword_match,
+    RoutingConfig,
+    RoutingRule,
+    load_routing_config,
+    default_config,
+)
 
 
-# ── Router ───────────────────────────────────────────────────────
+# ── Built-in routing (no config) ─────────────────────────────────
 
 class TestRoute:
     def test_metadata_wing_room_override(self):
@@ -34,26 +43,26 @@ class TestRoute:
         assert route("The bug is fixed now") == ("chat", "solutions")
 
     def test_code_content_falls_through_to_default(self):
-        # Code-wing routing was removed — code content is now routed by
+        # Code-wing routing was removed — code content is routed by
         # the miner via directory structure, not the keyword router.
-        assert route("The API endpoint returns 500") == ("chat", "context")
-        assert route("Updated the database schema migration") == ("chat", "context")
-        assert route("Changed the config settings") == ("chat", "context")
-        assert route("class UserService:") == ("chat", "context")
-        assert route("def process_payment():") == ("chat", "context")
+        assert route("The API endpoint returns 500") == ("chat", "general")
+        assert route("Updated the database schema migration") == ("chat", "general")
+        assert route("Changed the config settings") == ("chat", "general")
+        assert route("class UserService:") == ("chat", "general")
+        assert route("def process_payment():") == ("chat", "general")
 
     def test_default_fallback(self):
-        # No keywords → default wing/room
-        result = route("Some generic long enough message that doesn't match any patterns at all whatsoever")
-        assert result == ("chat", "context")
+        result = route("Some generic message that doesn't match any patterns at all")
+        assert result == ("chat", "general")
 
     def test_first_matching_rule_wins(self):
-        # "stuck" matches escalations before anything else
+        # "stuck" matches escalations; "workaround" would match workarounds
+        # but escalations rule comes first in built-ins
         result = route("I'm stuck, need a workaround")
         assert result == ("chat", "escalations")
 
 
-# ── Keyword match ────────────────────────────────────────────────
+# ── Keyword match ─────────────────────────────────────────────────
 
 class TestKeywordMatch:
     def test_returns_none_for_no_match(self):
@@ -61,3 +70,120 @@ class TestKeywordMatch:
 
     def test_case_insensitive(self):
         assert _keyword_match("We DECIDED to use Go") == ("chat", "decisions")
+
+
+# ── RoutingConfig dataclass ───────────────────────────────────────
+
+class TestRoutingConfig:
+    def test_default_config_has_builtin_rules(self):
+        cfg = default_config()
+        assert len(cfg.rules) > 0
+        assert cfg.default == ("chat", "general")
+
+    def test_custom_config_overrides_rules(self):
+        cfg = RoutingConfig(
+            rules=[RoutingRule(keywords=["rfc", "proposal"], target=("chat", "decisions"))],
+            default=("chat", "general"),
+        )
+        assert route("This is an RFC for the new auth flow", config=cfg) == ("chat", "decisions")
+
+    def test_custom_config_default_override(self):
+        cfg = RoutingConfig(rules=[], default=("chat", "inbox"))
+        assert route("some unmatched content xyz", config=cfg) == ("chat", "inbox")
+
+    def test_user_rules_replace_builtins(self):
+        # With a custom config that has no decision rule,
+        # "decided" should fall through to default.
+        cfg = RoutingConfig(
+            rules=[RoutingRule(keywords=["hotfix"], target=("chat", "workarounds"))],
+            default=("chat", "general"),
+        )
+        assert route("We decided to use Postgres", config=cfg) == ("chat", "general")
+        assert route("applied a hotfix today", config=cfg) == ("chat", "workarounds")
+
+    def test_metadata_override_still_wins_with_custom_config(self):
+        cfg = RoutingConfig(rules=[], default=("chat", "general"))
+        result = route("anything", {"wing": "code", "room": "src"}, config=cfg)
+        assert result == ("code", "src")
+
+
+# ── load_routing_config ───────────────────────────────────────────
+
+class TestLoadRoutingConfig:
+    def test_returns_defaults_when_no_config_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_routing_config(tmp)
+            assert cfg.default == ("chat", "general")
+            assert len(cfg.rules) > 0  # built-in rules
+
+    def test_loads_rules_from_yaml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, ".pneuma.yaml").write_text(
+                "routing:\n"
+                "  rules:\n"
+                "    - keywords: [rfc, proposal]\n"
+                "      target: [chat, decisions]\n"
+                "    - keywords: [postmortem]\n"
+                "      target: [chat, solutions]\n"
+                "  default: [chat, inbox]\n",
+                encoding="utf-8",
+            )
+            cfg = load_routing_config(tmp)
+            assert cfg.default == ("chat", "inbox")
+            assert len(cfg.rules) == 2
+            assert cfg.rules[0].target == ("chat", "decisions")
+            assert cfg.rules[1].target == ("chat", "solutions")
+            assert "rfc" in cfg.rules[0].keywords
+
+    def test_loads_default_override_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, ".pneuma.yaml").write_text(
+                "routing:\n"
+                "  default: [chat, inbox]\n",
+                encoding="utf-8",
+            )
+            cfg = load_routing_config(tmp)
+            # default overridden; rules fall back to built-ins
+            assert cfg.default == ("chat", "inbox")
+            assert len(cfg.rules) > 0
+
+    def test_loads_from_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "routing": {
+                    "rules": [
+                        {"keywords": ["postmortem"], "target": ["chat", "solutions"]}
+                    ],
+                    "default": ["chat", "general"],
+                }
+            }
+            Path(tmp, ".pneuma.json").write_text(json.dumps(config), encoding="utf-8")
+            cfg = load_routing_config(tmp)
+            assert cfg.rules[0].target == ("chat", "solutions")
+
+    def test_ignores_malformed_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, ".pneuma.yaml").write_text(
+                "routing:\n"
+                "  rules:\n"
+                "    - keywords: [good]\n"
+                "      target: [chat, decisions]\n"
+                "    - not_a_dict: true\n"
+                "    - keywords: [missing_target]\n"
+                "  default: [chat, general]\n",
+                encoding="utf-8",
+            )
+            cfg = load_routing_config(tmp)
+            # Only the valid rule should be parsed
+            assert len(cfg.rules) == 1
+            assert "good" in cfg.rules[0].keywords
+
+    def test_returns_defaults_when_routing_section_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, ".pneuma.yaml").write_text(
+                "miner:\n  chunk_size: 2000\n",
+                encoding="utf-8",
+            )
+            cfg = load_routing_config(tmp)
+            assert cfg.default == ("chat", "general")
+            assert len(cfg.rules) > 0

@@ -148,6 +148,47 @@ Template files are also available in [`mcp_server/config/`](../mcp_server/config
 
 ---
 
+## Per-Project Routing Config (`.pneuma.yaml`)
+
+Content routing — where `save_knowledge` and `import_content` store entries — is configurable per project via the `routing:` section of `.pneuma.yaml`.
+
+```yaml
+routing:
+  rules:
+    - keywords: ["decided", "decision", "we chose", "we agreed"]
+      target: [chat, decisions]
+    - keywords: ["workaround", "hack", "temp fix", "hotfix"]
+      target: [chat, workarounds]
+    - keywords: ["solution", "solved", "fixed", "resolved"]
+      target: [chat, solutions]
+    - keywords: ["escalate", "blocked", "help needed"]
+      target: [chat, escalations]
+    # Add your own:
+    # - keywords: ["rfc", "proposal"]
+    #   target: [chat, decisions]
+  default: [chat, general]
+```
+
+| Field | Description | Default |
+|---|---|---|
+| `rules` | Ordered list of keyword → `[wing, room]` mappings. First match wins. Specifying any rules **replaces** the built-in rules entirely. | Built-in rules (see below) |
+| `default` | Fallback `[wing, room]` for content that matches no rule. | `[chat, general]` |
+
+**Built-in rules** (active when `routing:` is absent):
+
+| Keywords | Target |
+|---|---|
+| `escalate`, `help needed`, `blocked`, `stuck` | `chat/escalations` |
+| `decided`, `decision`, `we agreed`, `we chose`, `architecture` | `chat/decisions` |
+| `style guide`, `naming convention`, `lint`, `format` | `chat/conventions` |
+| `workaround`, `hack`, `temp fix`, `hotfix` | `chat/workarounds` |
+| `solution`, `solved`, `fixed`, `resolved` | `chat/solutions` |
+| *(no match)* | `chat/general` |
+
+> **Explicit routing always wins.** If the agent calls `save_knowledge(..., wing="chat", room="decisions")` directly, the routing rules are bypassed.
+
+---
+
 ## Auto-Setup
 
 Rather than editing config files manually, run:
