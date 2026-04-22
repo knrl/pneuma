@@ -1,0 +1,12 @@
+[book]
+title = "Pneuma"
+description = "Auto-Curated AI Memory for Your Codebase"
+authors = ["Pneuma Contributors"]
+language = "en"
+multilingual = false
+src = "docs"
+
+[output.html]
+site-url = "/pneuma/"
+git-repository-url = "https://github.com/knrl/pneuma"
+edit-url-template = "https://github.com/knrl/pneuma/edit/main/docs/{path}"
