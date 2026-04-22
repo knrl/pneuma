@@ -503,8 +503,12 @@ class TestReadDiary:
 # ── import_content ───────────────────────────────────────────────
 
 class TestImportContent:
+    @patch("mcp_server.tools.import_tools._resolve_safe_path")
     @patch("mcp_server.tools.import_tools.import_file")
-    def test_import_file(self, mock_import_file):
+    def test_import_file(self, mock_import_file, mock_resolve):
+        from pathlib import Path
+        safe_path = Path("/tmp/doc.md")
+        mock_resolve.return_value = (safe_path, None)
         mock_import_file.return_value = {
             "doc_type": "markdown",
             "entries_stored": 12,
@@ -515,7 +519,7 @@ class TestImportContent:
         assert "12" in result
         assert "markdown" in result
         mock_import_file.assert_called_once_with(
-            path="/tmp/doc.md", doc_type="auto", wing="", room=""
+            path=str(safe_path), doc_type="auto", wing="", room=""
         )
 
     @patch("mcp_server.tools.import_tools._import_content")
@@ -542,13 +546,12 @@ class TestImportContent:
         result = _run(import_content())
         assert "Nothing to import" in result
 
-    @patch("mcp_server.tools.import_tools.import_file")
-    def test_file_not_found(self, mock_import_file):
-        mock_import_file.side_effect = FileNotFoundError()
+    def test_file_not_found(self):
         from mcp_server.tools.import_tools import import_content
 
+        # _resolve_safe_path catches missing files before import_file is called
         result = _run(import_content(file_path="/tmp/missing.md"))
-        assert "File not found" in result
+        assert "Not a regular file" in result
 
 
 # ── check_recent_chat ────────────────────────────────────────────
