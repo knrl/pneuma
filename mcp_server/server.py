@@ -23,6 +23,8 @@ Tool surface (21 tools):
   Import (1)       : import_content
 """
 
+import asyncio
+import functools
 import logging
 import os
 import sys
@@ -76,6 +78,34 @@ _setup_logging()
 _log = logging.getLogger("pneuma.mcp")
 _log.info("MCP server starting (pid=%s)", os.getpid())
 
+
+# ── Per-tool exception boundary ───────────────────────────────────────────────
+# Without this, any unhandled exception inside a tool propagates through
+# FastMCP's dispatch layer and can kill the server process entirely.
+# Each tool is wrapped so errors return a structured string to the agent
+# while the server keeps running and all other tools stay available.
+
+def _safe_tool(fn):
+    @functools.wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                return await fn(*args, **kwargs)
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            _log.exception("Tool %r raised an unhandled exception", fn.__name__)
+            return (
+                f"[Pneuma] {fn.__name__} failed: {type(exc).__name__}: {exc}\n"
+                "The server is still running. "
+                "Full traceback in ~/.pneuma/mcp-server.log."
+            )
+    return _wrapper
+
+
+def _register(*fns):
+    for fn in fns:
+        mcp.tool()(_safe_tool(fn))
+
 # ── Configure project-specific palace ────────────────────────────
 # PNEUMA_PROJECT env var tells the server which project to serve.
 # Set by `pneuma setup vscode/cursor` in the MCP client config.
@@ -112,15 +142,11 @@ from mcp_server.tools.memory_tools import (
     initialize_project,
 )
 
-mcp.tool()(wake_up)
-mcp.tool()(recall)
-mcp.tool()(search_memory)
-mcp.tool()(save_knowledge)
-mcp.tool()(palace_overview)
-mcp.tool()(mine_codebase)
-mcp.tool()(optimize_memory)
-mcp.tool()(delete_entry)
-mcp.tool()(initialize_project)
+_register(
+    wake_up, recall, search_memory, save_knowledge,
+    palace_overview, mine_codebase, optimize_memory,
+    delete_entry, initialize_project,
+)
 
 # ── AAAK dialect as a prompt (reference material, not an action) ─
 from core.palace import aaak_spec as _aaak
@@ -194,9 +220,7 @@ from mcp_server.tools.kg_tools import (
     invalidate_fact,
 )
 
-mcp.tool()(track_fact)
-mcp.tool()(query_facts)
-mcp.tool()(invalidate_fact)
+_register(track_fact, query_facts, invalidate_fact)
 
 # ── Navigation tools (2) ─────────────────────────────────────────
 from mcp_server.tools.nav_tools import (
@@ -204,8 +228,7 @@ from mcp_server.tools.nav_tools import (
     find_bridges,
 )
 
-mcp.tool()(explore_palace)
-mcp.tool()(find_bridges)
+_register(explore_palace, find_bridges)
 
 # ── Diary tools (2) ──────────────────────────────────────────────
 from mcp_server.tools.diary_tools import (
@@ -213,8 +236,7 @@ from mcp_server.tools.diary_tools import (
     read_diary,
 )
 
-mcp.tool()(write_diary)
-mcp.tool()(read_diary)
+_register(write_diary, read_diary)
 
 # ── Chat tools (4) — platform-agnostic, registered if Slack OR Teams configured ─
 _slack_configured = bool(os.getenv("SLACK_BOT_TOKEN", ""))
@@ -228,15 +250,12 @@ if _slack_configured or _teams_configured:
         escalate_to_human,
     )
 
-    mcp.tool()(check_recent_chat)
-    mcp.tool()(ask_team)
-    mcp.tool()(ingest_chat_channel)
-    mcp.tool()(escalate_to_human)
+    _register(check_recent_chat, ask_team, ingest_chat_channel, escalate_to_human)
 
 # ── Import tools (1) ─────────────────────────────────────────────
 from mcp_server.tools.import_tools import import_content
 
-mcp.tool()(import_content)
+_register(import_content)
 
 
 def main():
@@ -245,6 +264,23 @@ def main():
         "Tools registered — slack=%s teams=%s project=%s",
         _slack_configured, _teams_configured, _project_path or "(not set)",
     )
+
+    # Catch unhandled exceptions in background asyncio tasks (e.g. fire-and-forget
+    # coroutines that raise after the tool has already returned) without crashing
+    # the event loop.  Must be set before mcp.run() starts the loop.
+    def _handle_asyncio_exception(loop, context):
+        exc = context.get("exception")
+        _log.error(
+            "Unhandled asyncio exception: %s",
+            context.get("message", ""),
+            exc_info=exc,
+        )
+
+    try:
+        asyncio.get_event_loop().set_exception_handler(_handle_asyncio_exception)
+    except RuntimeError:
+        pass  # No current event loop yet; anyio will create one when mcp.run() fires.
+
     try:
         mcp.run(transport="stdio")
     except Exception:
