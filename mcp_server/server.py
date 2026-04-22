@@ -41,6 +41,13 @@ def _setup_logging() -> None:
     root = logging.getLogger()
     log_level = os.environ.get("PNEUMA_LOG_LEVEL", "INFO").upper()
 
+    # Set excepthook unconditionally so uncaught exceptions always route through
+    # logging regardless of which handler (file or stderr) ends up being active.
+    # MCP protocol owns stdout, so Python's default excepthook (stdout) is wrong.
+    def _excepthook(exc_type, exc_value, exc_tb):
+        logging.exception("Uncaught MCP exception", exc_info=(exc_type, exc_value, exc_tb))
+    sys.excepthook = _excepthook
+
     log_dir = Path(os.environ.get("PNEUMA_HOME", os.path.expanduser("~/.pneuma")))
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -63,11 +70,6 @@ def _setup_logging() -> None:
     if not any(getattr(h, "baseFilename", None) == str(log_path) for h in root.handlers):
         root.addHandler(handler)
     root.setLevel(log_level)
-
-    # Uncaught exceptions should land in the log (MCP protocol swallows stdout)
-    def _excepthook(exc_type, exc_value, exc_tb):
-        logging.exception("Uncaught MCP exception", exc_info=(exc_type, exc_value, exc_tb))
-    sys.excepthook = _excepthook
 
 
 _setup_logging()
