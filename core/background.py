@@ -64,7 +64,12 @@ def _write_state(state: dict) -> None:
 # ── Task runner ──────────────────────────────────────────────────────────────
 
 def _fire(label: str, fn, *args, **kwargs) -> None:
-    """Run synchronous fn(*args, **kwargs) in a thread executor as a background task."""
+    """Run synchronous fn(*args, **kwargs) in a thread executor as a background task.
+
+    If an event loop is running (MCP/async context) the task is scheduled
+    as a non-blocking background coroutine.  If not (CLI, test setup) it runs
+    synchronously so the work is never silently dropped.
+    """
 
     async def _run():
         _log.info("bg/%s: started", label)
@@ -76,15 +81,20 @@ def _fire(label: str, fn, *args, **kwargs) -> None:
             _log.exception("bg/%s: failed", label)
 
     try:
-        loop = asyncio.get_event_loop()
-        if not loop.is_running():
-            _log.debug("bg/%s: skipped — no running event loop", label)
-            return
-        task = loop.create_task(_run())
-        _active_tasks.add(task)
-        task.add_done_callback(_active_tasks.discard)
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        _log.debug("bg/%s: skipped — could not get event loop", label)
+        # No event loop — run synchronously so the work is not silently skipped.
+        _log.info("bg/%s: running synchronously (no event loop)", label)
+        try:
+            fn(*args, **kwargs)
+            _log.info("bg/%s: done (sync)", label)
+        except Exception:
+            _log.exception("bg/%s: failed (sync)", label)
+        return
+
+    task = loop.create_task(_run())
+    _active_tasks.add(task)
+    task.add_done_callback(_active_tasks.discard)
 
 
 
