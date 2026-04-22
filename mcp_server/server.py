@@ -1,5 +1,5 @@
 """
-Pneuma v1.0 — Unified MCP Server.
+Pneuma v0.1.0 — Unified MCP Server.
 Exposes 17 core tools + 4 conditional chat tools to AI coding assistants.
 
 Recommended usage flow:

@@ -1,5 +1,5 @@
 """
-Ingestion pipeline (v1.0).
+Ingestion pipeline.
 Accepts arbitrary content + metadata, routes it to the correct
 MemPalace wing/room via the auto-organization router, and stores it.
 """

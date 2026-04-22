@@ -1,4 +1,4 @@
-# Security Audit Checklist — Pneuma v1.0
+# Security Audit Checklist — Pneuma v0.1.0
 
 ## Data Boundaries
 

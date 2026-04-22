@@ -1,5 +1,5 @@
 """
-Pneuma v1.0 — MCP Tool Map
+Pneuma v0.1.0 — MCP Tool Map
 
 Documents which tools are exposed through the unified Pneuma MCP
 server.  All storage goes through MemPalace — Pneuma never touches

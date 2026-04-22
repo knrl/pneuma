@@ -1,5 +1,5 @@
 """
-RAG retrieval chain (v1.0).
+RAG retrieval chain.
 Searches the MemPalace and returns ranked results with confidence scores.
 """
 
