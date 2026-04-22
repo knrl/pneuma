@@ -65,7 +65,7 @@ Three routing rules apply on top of plain mirroring:
 2. **Depth-2 expansion** — if a top-level directory has ≥ 5 immediate subdirectories (configurable via `miner.depth2_threshold`), files inside it are routed to `top-sub` rooms (e.g. `iclbase/authorization/` → room `iclbase-authorization`).
 3. **Root-level files** — files sitting directly at the project root go to room `general`.
 
-See [docs/mining.md](mining.md) for full details.
+See [Codebase Mining](features/mining.md) for full details.
 
 ---
 
@@ -117,7 +117,7 @@ MemPalace's `mempalace mine` creates directory-accurate rooms. Pneuma then layer
 
 ## Token consumption (quick reference)
 
-See [retrieval-benchmark.md](retrieval-benchmark.md) for full analysis.
+Token counts shown are approximate averages measured on representative projects.
 
 | Approach | Tokens per query (top_k=5) |
 |---|---|

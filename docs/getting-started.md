@@ -76,11 +76,11 @@ pneuma import slack_export.json --type chat-history
 pneuma import --text "We use PostgreSQL because of JSONB support"
 ```
 
-See [On-Demand Import](features/02-on-demand-import.md) for full options.
+See [On-Demand Import](features/on-demand-import.md) for full options.
 
 ---
 
 ## Optional: Connect Slack or Teams
 
-- **Slack** — see [Slack Integration](features/01-slack-integration.md) for app creation, OAuth scopes, and environment variables
+- **Slack** — see [Slack Integration](features/slack-integration.md) for app creation, OAuth scopes, and environment variables
 - **Teams** — see [Teams Setup](teams-setup.md) for Azure AD app registration and Graph API permissions
