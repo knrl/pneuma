@@ -118,7 +118,7 @@ miner:
     - "docs/**"
 ```
 
-`.gitignore` patterns are respected automatically (`respect_gitignore: true` by default). Copy [`.pneuma.yaml.example`](../../.pneuma.yaml.example) from the repo root for a fully-annotated starting point. See [Codebase Mining](../mining.md) for all options.
+`.gitignore` patterns are respected automatically (`respect_gitignore: true` by default). Copy [`.pneuma.yaml.example`](../../.pneuma.yaml.example) from the repo root for a fully-annotated starting point. See [Codebase Mining](mining.md) for all options.
 
 ### `pneuma status [-v]`
 
@@ -276,7 +276,7 @@ $ pneuma facts "database" --as-of 2026-01-15
 
 ### `pneuma import <file> [--type TYPE] [--wing W] [--room R]`
 
-Import documents or text. See [On-Demand Import](02-on-demand-import.md) for full details.
+Import documents or text. See [On-Demand Import](on-demand-import.md) for full details.
 
 ```bash
 $ pneuma import decisions.md --type decision

@@ -23,7 +23,7 @@ README.md                → code/general (project root)
 iclbase/http/server.cpp  → code/iclbase-http  (depth-2: iclbase has many subdirs)
 ```
 
-See [docs/mining.md](../mining.md) for full details including canonical rooms and two-level mirroring.
+See [Codebase Mining](mining.md) for full details including canonical rooms and two-level mirroring.
 
 ### Why this way?
 
