@@ -29,3 +29,8 @@ pneuma-mcp = "mcp_server.server:main"
 
 [tool.setuptools.packages.find]
 include = ["core*", "mcp_server*", "chat_bot*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
