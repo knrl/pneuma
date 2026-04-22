@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 class RoutingRule:
     keywords: list[str]
     target: tuple[str, str]
+    semantic_type: str | None = None
 
 
 @dataclass
@@ -37,22 +38,27 @@ _BUILTIN_RULES: list[RoutingRule] = [
     RoutingRule(
         keywords=["escalate", "help needed", "blocked", "stuck", "can't figure"],
         target=("chat", "escalations"),
+        semantic_type="escalation",
     ),
     RoutingRule(
         keywords=["decided", "decision", "we agreed", "we chose", "convention", "standard", "architecture"],
         target=("chat", "decisions"),
+        semantic_type="decision",
     ),
     RoutingRule(
         keywords=["style guide", "naming convention", "lint", "format"],
         target=("chat", "conventions"),
+        semantic_type="convention",
     ),
     RoutingRule(
         keywords=["workaround", "hack", "temp fix", "temporary", "hotfix"],
         target=("chat", "workarounds"),
+        semantic_type="workaround",
     ),
     RoutingRule(
         keywords=["solution", "solved", "fixed", "answer", "resolved"],
         target=("chat", "solutions"),
+        semantic_type="solution",
     ),
 ]
 
@@ -99,9 +105,11 @@ def load_routing_config(project_path: str) -> RoutingConfig:
             kws = item.get("keywords")
             tgt = item.get("target")
             if isinstance(kws, list) and isinstance(tgt, (list, tuple)) and len(tgt) == 2:
+                stype = item.get("semantic_type")
                 parsed.append(RoutingRule(
                     keywords=[str(k) for k in kws],
                     target=(str(tgt[0]), str(tgt[1])),
+                    semantic_type=str(stype) if stype else None,
                 ))
         if parsed:
             cfg.rules = parsed  # user rules replace built-ins
@@ -146,6 +154,24 @@ def _read_yaml_section(project_path: str) -> dict | None:
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 
+def _route_full(
+    content: str,
+    metadata: dict | None = None,
+    config: RoutingConfig | None = None,
+) -> tuple[str, str, str | None]:
+    """Internal: single pass returning (wing, room, semantic_type)."""
+    if metadata and metadata.get("wing") and metadata.get("room"):
+        return (metadata["wing"], metadata["room"], metadata.get("semantic_type"))
+
+    cfg = config or default_config()
+    text = content.lower()
+    for rule in cfg.rules:
+        if any(kw in text for kw in rule.keywords):
+            return (*rule.target, rule.semantic_type)
+
+    return (*cfg.default, None)
+
+
 def route(
     content: str,
     metadata: dict | None = None,
@@ -158,17 +184,18 @@ def route(
     2. Try rules from *config* (user-defined or built-in).
     3. Fall back to config.default.
     """
-    if metadata and metadata.get("wing") and metadata.get("room"):
-        return (metadata["wing"], metadata["room"])
+    wing, room, _ = _route_full(content, metadata, config)
+    return (wing, room)
 
-    cfg = config or default_config()
 
-    text = content.lower()
-    for rule in cfg.rules:
-        if any(kw in text for kw in rule.keywords):
-            return rule.target
-
-    return cfg.default
+def classify(
+    content: str,
+    metadata: dict | None = None,
+    config: RoutingConfig | None = None,
+) -> str | None:
+    """Return the semantic type for *content*, or None for general content."""
+    _, _, semantic_type = _route_full(content, metadata, config)
+    return semantic_type
 
 
 # ── Kept for tests that import this directly ──────────────────────────────────

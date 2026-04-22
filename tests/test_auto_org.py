@@ -8,6 +8,7 @@ import pytest
 
 from core.auto_org.router import (
     route,
+    classify,
     _keyword_match,
     RoutingConfig,
     RoutingRule,
@@ -187,3 +188,76 @@ class TestLoadRoutingConfig:
             cfg = load_routing_config(tmp)
             assert cfg.default == ("chat", "general")
             assert len(cfg.rules) > 0
+
+    def test_loads_semantic_type_from_yaml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, ".pneuma.yaml").write_text(
+                "routing:\n"
+                "  rules:\n"
+                "    - keywords: [rfc]\n"
+                "      target: [chat, decisions]\n"
+                "      semantic_type: decision\n"
+                "    - keywords: [postmortem]\n"
+                "      target: [chat, solutions]\n"
+                "  default: [chat, general]\n",
+                encoding="utf-8",
+            )
+            cfg = load_routing_config(tmp)
+            assert cfg.rules[0].semantic_type == "decision"
+            assert cfg.rules[1].semantic_type is None
+
+
+# ── classify() ───────────────────────────────────────────────────────────────
+
+class TestClassify:
+    def test_decision_content(self):
+        assert classify("We decided to use PostgreSQL") == "decision"
+
+    def test_solution_content(self):
+        assert classify("I fixed the memory leak") == "solution"
+
+    def test_workaround_content(self):
+        assert classify("Applied a hotfix for the crash") == "workaround"
+
+    def test_escalation_content(self):
+        assert classify("I'm stuck on this issue") == "escalation"
+
+    def test_convention_content(self):
+        assert classify("See the style guide for naming") == "convention"
+
+    def test_general_content_returns_none(self):
+        assert classify("some random message") is None
+
+    def test_explicit_metadata_passthrough(self):
+        # When wing/room are explicit, semantic_type comes from metadata if set
+        result = classify("anything", {"wing": "chat", "room": "decisions", "semantic_type": "decision"})
+        assert result == "decision"
+
+    def test_explicit_metadata_no_semantic_type(self):
+        # Explicit routing without semantic_type → None
+        result = classify("anything", {"wing": "chat", "room": "decisions"})
+        assert result is None
+
+    def test_custom_config_semantic_type(self):
+        cfg = RoutingConfig(
+            rules=[RoutingRule(keywords=["postmortem"], target=("chat", "solutions"), semantic_type="solution")],
+            default=("chat", "general"),
+        )
+        assert classify("postmortem from last incident", config=cfg) == "solution"
+
+    def test_builtin_rules_have_semantic_types(self):
+        cfg = default_config()
+        types = {r.semantic_type for r in cfg.rules if r.semantic_type}
+        assert types == {"escalation", "decision", "convention", "workaround", "solution"}
+
+
+# ── RoutingRule.semantic_type ─────────────────────────────────────────────────
+
+class TestRoutingRuleSemanticType:
+    def test_default_is_none(self):
+        rule = RoutingRule(keywords=["foo"], target=("chat", "general"))
+        assert rule.semantic_type is None
+
+    def test_explicit_semantic_type(self):
+        rule = RoutingRule(keywords=["foo"], target=("chat", "decisions"), semantic_type="decision")
+        assert rule.semantic_type == "decision"

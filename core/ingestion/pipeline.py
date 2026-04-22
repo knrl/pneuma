@@ -7,7 +7,7 @@ MemPalace wing/room via the auto-organization router, and stores it.
 import os
 import time
 
-from core.auto_org.router import route, load_routing_config, RoutingConfig
+from core.auto_org.router import _route_full, load_routing_config, RoutingConfig
 
 
 # ── Routing config cache ──────────────────────────────────────────────────────
@@ -68,7 +68,10 @@ def inject_entry(
     metadata = dict(metadata) if metadata else {}
 
     cfg = routing_config if routing_config is not None else _get_routing_config()
-    wing, room = route(content, metadata, config=cfg)
+    wing, room, semantic_type = _route_full(content, metadata, config=cfg)
+
+    if semantic_type and "semantic_type" not in metadata:
+        metadata["semantic_type"] = semantic_type
 
     source = metadata.pop("source", "pneuma")
 
@@ -85,6 +88,7 @@ def inject_entry(
         "entry_id": result["entry_id"],
         "collection": result["collection"],
         "ingested_at": result["ingested_at"],
+        "semantic_type": semantic_type,
     }
 
 

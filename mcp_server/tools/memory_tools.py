@@ -240,12 +240,14 @@ async def save_knowledge(
     routed_wing = parts[0] if parts else collection
     routed_room = parts[1] if len(parts) > 1 else ""
     routing = "explicit" if (wing and room) else "auto-routed"
+    stype = result.get("semantic_type")
+    type_label = f" [{stype}]" if stype else ""
 
     from core.background import bump_and_maybe_optimize
     bump_and_maybe_optimize()
 
     return (
-        f"Saved to wing='{routed_wing}', room='{routed_room}' ({routing}).\n"
+        f"Saved to wing='{routed_wing}', room='{routed_room}'{type_label} ({routing}).\n"
         f"Entry ID: {result['entry_id']}\n"
         f"No duplicates found."
     )

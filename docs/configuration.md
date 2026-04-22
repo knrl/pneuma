@@ -157,15 +157,20 @@ routing:
   rules:
     - keywords: ["decided", "decision", "we chose", "we agreed"]
       target: [chat, decisions]
+      semantic_type: decision       # optional — what the entry IS
     - keywords: ["workaround", "hack", "temp fix", "hotfix"]
       target: [chat, workarounds]
+      semantic_type: workaround
     - keywords: ["solution", "solved", "fixed", "resolved"]
       target: [chat, solutions]
+      semantic_type: solution
     - keywords: ["escalate", "blocked", "help needed"]
       target: [chat, escalations]
+      semantic_type: escalation
     # Add your own:
     # - keywords: ["rfc", "proposal"]
     #   target: [chat, decisions]
+    #   semantic_type: decision
   default: [chat, general]
 ```
 
@@ -173,17 +178,18 @@ routing:
 |---|---|---|
 | `rules` | Ordered list of keyword → `[wing, room]` mappings. First match wins. Specifying any rules **replaces** the built-in rules entirely. | Built-in rules (see below) |
 | `default` | Fallback `[wing, room]` for content that matches no rule. | `[chat, general]` |
+| `semantic_type` | Optional per-rule label stored as entry metadata. Separates what an entry *is* from where it lives. | Derived from built-in rules; `null` for custom rules without it |
 
 **Built-in rules** (active when `routing:` is absent):
 
-| Keywords | Target |
-|---|---|
-| `escalate`, `help needed`, `blocked`, `stuck` | `chat/escalations` |
-| `decided`, `decision`, `we agreed`, `we chose`, `architecture` | `chat/decisions` |
-| `style guide`, `naming convention`, `lint`, `format` | `chat/conventions` |
-| `workaround`, `hack`, `temp fix`, `hotfix` | `chat/workarounds` |
-| `solution`, `solved`, `fixed`, `resolved` | `chat/solutions` |
-| *(no match)* | `chat/general` |
+| Keywords | Target | Semantic type |
+|---|---|---|
+| `escalate`, `help needed`, `blocked`, `stuck` | `chat/escalations` | `escalation` |
+| `decided`, `decision`, `we agreed`, `we chose`, `architecture` | `chat/decisions` | `decision` |
+| `style guide`, `naming convention`, `lint`, `format` | `chat/conventions` | `convention` |
+| `workaround`, `hack`, `temp fix`, `hotfix` | `chat/workarounds` | `workaround` |
+| `solution`, `solved`, `fixed`, `resolved` | `chat/solutions` | `solution` |
+| *(no match)* | `chat/general` | *(none)* |
 
 > **Explicit routing always wins.** If the agent calls `save_knowledge(..., wing="chat", room="decisions")` directly, the routing rules are bypassed.
 

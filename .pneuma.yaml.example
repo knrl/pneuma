@@ -98,13 +98,18 @@ miner:
 #   rules:
 #     - keywords: ["decided", "decision", "we chose", "we agreed", "we're using"]
 #       target: [chat, decisions]
+#       semantic_type: decision        # what the entry IS (stored as metadata)
 #     - keywords: ["workaround", "hack", "temp fix", "hotfix"]
 #       target: [chat, workarounds]
+#       semantic_type: workaround
 #     - keywords: ["solution", "solved", "fixed", "resolved"]
 #       target: [chat, solutions]
+#       semantic_type: solution
 #     - keywords: ["escalate", "blocked", "help needed", "stuck"]
 #       target: [chat, escalations]
+#       semantic_type: escalation
 #     # Add your own vocabulary:
 #     # - keywords: ["rfc", "proposal", "we should consider"]
 #     #   target: [chat, decisions]
+#     #   semantic_type: decision
 #   default: [chat, general]

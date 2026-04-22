@@ -1,6 +1,6 @@
 """Tests for core/ingestion/pipeline — inject_entry auto-routing."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -20,9 +20,9 @@ _MOCK_RESULT = {
 
 class TestInjectEntry:
     @patch("core.palace.add_entry")
-    @patch("core.ingestion.pipeline.route")
+    @patch("core.ingestion.pipeline._route_full")
     def test_routes_decision_content(self, mock_route, mock_add):
-        mock_route.return_value = ("chat", "decisions")
+        mock_route.return_value = ("chat", "decisions", "decision")
         mock_add.return_value = {**_MOCK_RESULT, "collection": "chat-decisions"}
 
         result = inject_entry("We decided to use PostgreSQL")
@@ -30,38 +30,38 @@ class TestInjectEntry:
         mock_add.assert_called_once()
 
     @patch("core.palace.add_entry")
-    @patch("core.ingestion.pipeline.route")
+    @patch("core.ingestion.pipeline._route_full")
     def test_routes_solution_content(self, mock_route, mock_add):
-        mock_route.return_value = ("chat", "solutions")
+        mock_route.return_value = ("chat", "solutions", "solution")
         mock_add.return_value = {**_MOCK_RESULT, "room": "solutions", "collection": "chat-solutions"}
 
         result = inject_entry("I fixed the memory leak by closing connections")
         assert result["collection"] == "chat-solutions"
 
     @patch("core.palace.add_entry")
-    @patch("core.ingestion.pipeline.route")
+    @patch("core.ingestion.pipeline._route_full")
     def test_returns_entry_id(self, mock_route, mock_add):
-        mock_route.return_value = ("chat", "general")
+        mock_route.return_value = ("chat", "general", None)
         mock_add.return_value = {**_MOCK_RESULT, "entry_id": "drawer_test"}
 
         result = inject_entry("some content")
         assert result["entry_id"] == "drawer_test"
 
     @patch("core.palace.add_entry")
-    @patch("core.ingestion.pipeline.route")
+    @patch("core.ingestion.pipeline._route_full")
     def test_passes_metadata(self, mock_route, mock_add):
-        mock_route.return_value = ("chat", "general")
+        mock_route.return_value = ("chat", "general", None)
         mock_add.return_value = {**_MOCK_RESULT}
 
         inject_entry("content", metadata={"tags": "test"})
         call_kwargs = mock_add.call_args[1]
         assert call_kwargs["wing"] == "chat"
-        assert call_kwargs["room"] == "general"  # from mock_route
+        assert call_kwargs["room"] == "general"
 
     @patch("core.palace.add_entry")
-    @patch("core.ingestion.pipeline.route")
+    @patch("core.ingestion.pipeline._route_full")
     def test_wing_room_metadata_override(self, mock_route, mock_add):
-        mock_route.return_value = ("code", "src")
+        mock_route.return_value = ("code", "src", None)
         mock_add.return_value = {**_MOCK_RESULT, "collection": "code-src"}
 
         result = inject_entry("x", metadata={"wing": "code", "room": "src"})
@@ -79,3 +79,41 @@ class TestInjectEntry:
         call_kwargs = mock_add.call_args[1]
         assert call_kwargs["wing"] == "chat"
         assert call_kwargs["room"] == "inbox"
+
+    @patch("core.palace.add_entry")
+    @patch("core.ingestion.pipeline._route_full")
+    def test_semantic_type_in_result(self, mock_route, mock_add):
+        mock_route.return_value = ("chat", "decisions", "decision")
+        mock_add.return_value = {**_MOCK_RESULT}
+
+        result = inject_entry("We decided to use PostgreSQL")
+        assert result["semantic_type"] == "decision"
+
+    @patch("core.palace.add_entry")
+    @patch("core.ingestion.pipeline._route_full")
+    def test_semantic_type_injected_into_metadata(self, mock_route, mock_add):
+        mock_route.return_value = ("chat", "solutions", "solution")
+        mock_add.return_value = {**_MOCK_RESULT, "collection": "chat-solutions"}
+
+        inject_entry("I fixed the memory leak")
+        call_kwargs = mock_add.call_args[1]
+        assert call_kwargs["metadata"].get("semantic_type") == "solution"
+
+    @patch("core.palace.add_entry")
+    @patch("core.ingestion.pipeline._route_full")
+    def test_general_content_has_no_semantic_type(self, mock_route, mock_add):
+        mock_route.return_value = ("chat", "general", None)
+        mock_add.return_value = {**_MOCK_RESULT, "collection": "chat-general"}
+
+        result = inject_entry("some generic message")
+        assert result["semantic_type"] is None
+
+    @patch("core.palace.add_entry")
+    @patch("core.ingestion.pipeline._route_full")
+    def test_existing_semantic_type_not_overwritten(self, mock_route, mock_add):
+        mock_route.return_value = ("chat", "decisions", "decision")
+        mock_add.return_value = {**_MOCK_RESULT}
+
+        inject_entry("We decided to use PostgreSQL", metadata={"semantic_type": "custom"})
+        call_kwargs = mock_add.call_args[1]
+        assert call_kwargs["metadata"].get("semantic_type") == "custom"
