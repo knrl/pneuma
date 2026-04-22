@@ -1,10 +1,18 @@
 """Tests for core/auto_init/miner_state — SQLite state tracking for
 incremental re-mining."""
 
+import os
+import time
+
 import pytest
 from unittest.mock import patch
 
-from core.auto_init.miner_state import MiningState, compute_content_hash
+from core.auto_init.miner_state import (
+    MineProcessLock,
+    MINE_LOCK_STALE_AFTER,
+    MiningState,
+    compute_content_hash,
+)
 
 
 # ── compute_content_hash ─────────────────────────────────────────────────────
@@ -103,6 +111,72 @@ class TestMiningState:
         assert rec is not None
         assert rec.content_hash == "h"
         s2.close()
+
+
+# ── MineProcessLock ──────────────────────────────────────────────────────────
+
+class TestMineProcessLock:
+    def test_acquire_succeeds_when_no_lock(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        assert lock.try_acquire() is True
+        lock.release()
+
+    def test_lock_file_created(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        lock.try_acquire()
+        assert (tmp_path / "mine.lock").exists()
+        lock.release()
+
+    def test_lock_file_removed_on_release(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        lock.try_acquire()
+        lock.release()
+        assert not (tmp_path / "mine.lock").exists()
+
+    def test_second_acquire_fails(self, tmp_path):
+        lock1 = MineProcessLock(str(tmp_path))
+        lock2 = MineProcessLock(str(tmp_path))
+        assert lock1.try_acquire() is True
+        assert lock2.try_acquire() is False
+        lock1.release()
+
+    def test_lock_file_contains_pid(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        lock.try_acquire()
+        pid = int((tmp_path / "mine.lock").read_text())
+        assert pid == os.getpid()
+        lock.release()
+
+    def test_stale_lock_cleared(self, tmp_path):
+        lock_path = tmp_path / "mine.lock"
+        lock_path.write_text("99999")
+        old_mtime = time.time() - MINE_LOCK_STALE_AFTER - 10
+        os.utime(str(lock_path), (old_mtime, old_mtime))
+
+        lock = MineProcessLock(str(tmp_path))
+        assert lock.try_acquire() is True
+        lock.release()
+
+    def test_fresh_lock_blocks_second(self, tmp_path):
+        lock_path = tmp_path / "mine.lock"
+        lock_path.write_text("99999")
+        # mtime is fresh (default) — should block
+
+        lock = MineProcessLock(str(tmp_path))
+        assert lock.try_acquire() is False
+
+    def test_context_manager_releases(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        with lock:
+            lock.try_acquire()
+            assert (tmp_path / "mine.lock").exists()
+        assert not (tmp_path / "mine.lock").exists()
+
+    def test_release_idempotent(self, tmp_path):
+        lock = MineProcessLock(str(tmp_path))
+        lock.try_acquire()
+        lock.release()
+        lock.release()  # must not raise
 
 
 # ── Incremental integration with mine_project ───────────────────────────────

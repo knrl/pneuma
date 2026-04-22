@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+MINE_LOCK_STALE_AFTER = 3600  # seconds — treat lock as stale after 1 hour
 
 
 _SCHEMA = """
@@ -131,6 +134,63 @@ class MiningState:
         if rec is None:
             return True
         return rec.content_hash != content_hash
+
+
+# ── Cross-process mine lock ──────────────────────────────────────────────────
+
+
+class MineProcessLock:
+    """Cross-process advisory lock preventing concurrent incremental mines.
+
+    Uses ``os.open(O_EXCL)`` for atomic creation on local filesystems so that
+    only one ``mine_project`` call (CLI *or* background auto-mine) can run at
+    a time per palace directory.  Locks older than ``MINE_LOCK_STALE_AFTER``
+    seconds are treated as stale and silently cleared on the next attempt
+    (handles crashed processes that never released the lock).
+    """
+
+    def __init__(self, palace_dir: str | Path) -> None:
+        self._path = Path(palace_dir) / "mine.lock"
+        self._held = False
+
+    def try_acquire(self) -> bool:
+        """Return True if the lock was acquired, False if another mine is active."""
+        if self._path.exists():
+            try:
+                age = time.time() - self._path.stat().st_mtime
+                if age >= MINE_LOCK_STALE_AFTER:
+                    self._path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        try:
+            fd = os.open(str(self._path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+            self._held = True
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            # Permission error or unsupported filesystem — degrade gracefully
+            # rather than blocking a mine that may be the only way to recover.
+            return True
+
+    def release(self) -> None:
+        if self._held:
+            try:
+                self._path.unlink()
+            except Exception:
+                pass
+            self._held = False
+
+    def __enter__(self) -> "MineProcessLock":
+        return self
+
+    def __exit__(self, *_) -> None:
+        self.release()
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────

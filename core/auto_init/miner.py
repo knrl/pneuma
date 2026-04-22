@@ -10,6 +10,7 @@ and on demand via the mine_codebase MCP tool.
 """
 
 import hashlib
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -19,7 +20,9 @@ from core.auto_init.templates import slugify_room
 from core.auto_init.miner_config import MinerConfig, load_config
 from core.auto_init.miner_chunker import get_chunker, Chunk
 from core.auto_init.miner_summary import build_summary
-from core.auto_init.miner_state import MiningState, compute_content_hash
+from core.auto_init.miner_state import MiningState, MineProcessLock, compute_content_hash
+
+_log = logging.getLogger("pneuma.miner")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 # These are fallbacks when no MinerConfig is passed. MinerConfig values
@@ -502,165 +505,185 @@ def mine_project(
         proj = get_project(str(root))
         project_slug = (proj or {}).get("slug", "project")
 
-    # Open the state DB when running incrementally
+    # Open the state DB when running incrementally; hold a cross-process lock
+    # so CLI `pneuma mine` and background auto-mine from wake_up cannot race on
+    # the same SQLite state (concurrent read→delete→mine→upsert cycles corrupt
+    # entry_ids, leaving orphaned ChromaDB chunks with no state record).
     state: MiningState | None = None
     palace_dir: str | None = None
+    lock: MineProcessLock | None = None
     if incremental and not dry_run:
         from core.registry import get_project
         proj = get_project(str(root))
         if proj:
             palace_dir = proj["palace_dir"]
+            lock = MineProcessLock(palace_dir)
+            if not lock.try_acquire():
+                _log.warning(
+                    "mine_project: skipping incremental re-mine for %s "
+                    "— another mine process is already running",
+                    project_path,
+                )
+                result.errors.append(
+                    "Skipped: another mine_project is already running for this palace."
+                )
+                return result
             state = MiningState(palace_dir)
 
-    files = _discover_files(root, config, skip_reasons=result.skip_reasons)
+    try:
+        files = _discover_files(root, config, skip_reasons=result.skip_reasons)
 
-    # Pre-scan to find large top-level dirs for depth-2 room assignment.
-    # Exclude dirs that match skip patterns so their sub-rooms aren't created.
-    top_dirs = [
-        d.name for d in root.iterdir()
-        if d.is_dir() and d.name not in _SKIP_DIRS and not config.is_dir_skipped(d.name)
-    ]
-    depth2_dirs = _scan_large_dirs(root, top_dirs, config.depth2_threshold)
+        # Pre-scan to find large top-level dirs for depth-2 room assignment.
+        # Exclude dirs that match skip patterns so their sub-rooms aren't created.
+        top_dirs = [
+            d.name for d in root.iterdir()
+            if d.is_dir() and d.name not in _SKIP_DIRS and not config.is_dir_skipped(d.name)
+        ]
+        depth2_dirs = _scan_large_dirs(root, top_dirs, config.depth2_threshold)
 
-    if not dry_run:
-        from core.palace import delete_entry as _palace_delete
-    else:
-        _palace_delete = None  # type: ignore
+        if not dry_run:
+            from core.palace import delete_entry as _palace_delete
+        else:
+            _palace_delete = None  # type: ignore
 
-    # Track which rel_paths and rooms we've seen this run.
-    seen_rel_paths: set[str] = set()
-    seen_rooms: set[str] = set()
+        # Track which rel_paths and rooms we've seen this run.
+        seen_rel_paths: set[str] = set()
+        seen_rooms: set[str] = set()
 
-    # ── Phase 1: read files, check incremental state, build task list ─────────
-    tasks: list[_FileTask] = []
+        # ── Phase 1: read files, check incremental state, build task list ─────────
+        tasks: list[_FileTask] = []
 
-    for file_path in files:
-        if len(tasks) + result.files_processed >= config.max_files:
-            break
+        for file_path in files:
+            if len(tasks) + result.files_processed >= config.max_files:
+                break
 
-        try:
-            stat = file_path.stat()
-            if stat.st_size > config.max_file_size:
-                result.skip_reasons["over-max-size"] = result.skip_reasons.get("over-max-size", 0) + 1
-                continue
-            mtime = stat.st_mtime
-            size = stat.st_size
-        except OSError:
-            result.skip_reasons["stat-error"] = result.skip_reasons.get("stat-error", 0) + 1
-            continue
-
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
-        except Exception as exc:
-            result.errors.append(f"{file_path.name}: {exc}")
-            continue
-
-        if not content:
-            result.skip_reasons["empty-file"] = result.skip_reasons.get("empty-file", 0) + 1
-            continue
-
-        rel_path = str(file_path.relative_to(root))
-        rel_path_norm = rel_path.replace("\\", "/")
-        seen_rel_paths.add(rel_path_norm)
-        ext = file_path.suffix.lower()
-        wing, room = _route_by_path(rel_path_norm, depth2_dirs)
-        seen_rooms.add(room)
-        top_level_dir = Path(rel_path).parts[0] if len(Path(rel_path).parts) > 1 else ""
-
-        # ── Incremental: skip unchanged files ──────────────────────────────
-        if state is not None:
-            hash_now = compute_content_hash(content)
-            rec = state.get(rel_path_norm)
-            if rec is not None and rec.content_hash == hash_now:
-                result.files_unchanged += 1
-                if progress_cb:
-                    progress_cb(result.files_processed + result.files_unchanged,
-                                result.chunks_stored)
-                continue
-            # Changed — delete existing entries in main thread before re-mining
-            if rec is not None and _palace_delete:
-                for eid in rec.entry_ids:
-                    try:
-                        _palace_delete(eid)
-                    except Exception:
-                        pass
-
-        tasks.append(_FileTask(
-            file_path=file_path,
-            rel_path=rel_path_norm,
-            ext=ext,
-            wing=wing,
-            room=room,
-            content=content,
-            mtime=mtime,
-            size=size,
-            top_level_dir=top_level_dir,
-        ))
-
-    # ── Phase 2: process files in parallel ────────────────────────────────────
-    workers = max(1, config.workers)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        future_to_task = {
-            pool.submit(_mine_file_task, task, config, dry_run): task
-            for task in tasks
-        }
-        for future in as_completed(future_to_task):
-            task = future_to_task[future]
             try:
-                file_result = future.result()
-            except Exception as exc:
-                result.errors.append(f"{task.rel_path}: {exc}")
+                stat = file_path.stat()
+                if stat.st_size > config.max_file_size:
+                    result.skip_reasons["over-max-size"] = result.skip_reasons.get("over-max-size", 0) + 1
+                    continue
+                mtime = stat.st_mtime
+                size = stat.st_size
+            except OSError:
+                result.skip_reasons["stat-error"] = result.skip_reasons.get("stat-error", 0) + 1
                 continue
 
-            if dry_run:
-                key = file_result.dry_route_key
-                result.would_route[key] = result.would_route.get(key, 0) + file_result.dry_route_count
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore").strip()
+            except Exception as exc:
+                result.errors.append(f"{file_path.name}: {exc}")
+                continue
 
-            result.files_processed += 1
-            result.chunks_stored += file_result.chunks_stored
-            result.summaries_stored += file_result.summaries_stored
-            result.errors.extend(file_result.errors)
+            if not content:
+                result.skip_reasons["empty-file"] = result.skip_reasons.get("empty-file", 0) + 1
+                continue
 
-            # State upsert in main thread (SQLite connection is not thread-safe)
-            if state is not None and file_result.entry_ids:
-                try:
-                    state.upsert(
-                        rel_path=file_result.rel_path,
-                        content_hash=file_result.content_hash,
-                        mtime=file_result.mtime,
-                        entry_ids=file_result.entry_ids,
-                    )
-                except Exception as exc:
-                    result.errors.append(f"{task.rel_path} (state): {exc}")
+            rel_path = str(file_path.relative_to(root))
+            rel_path_norm = rel_path.replace("\\", "/")
+            seen_rel_paths.add(rel_path_norm)
+            ext = file_path.suffix.lower()
+            wing, room = _route_by_path(rel_path_norm, depth2_dirs)
+            seen_rooms.add(room)
+            top_level_dir = Path(rel_path).parts[0] if len(Path(rel_path).parts) > 1 else ""
 
-            if progress_cb:
-                progress_cb(result.files_processed, result.chunks_stored)
-
-    # ── Cleanup removed files ──────────────────────────────────────────────
-    if state is not None and not dry_run:
-        for rec in state.all_records():
-            if rec.rel_path not in seen_rel_paths:
-                if _palace_delete:
+            # ── Incremental: skip unchanged files ──────────────────────────────
+            if state is not None:
+                hash_now = compute_content_hash(content)
+                rec = state.get(rel_path_norm)
+                if rec is not None and rec.content_hash == hash_now:
+                    result.files_unchanged += 1
+                    if progress_cb:
+                        progress_cb(result.files_processed + result.files_unchanged,
+                                    result.chunks_stored)
+                    continue
+                # Changed — delete existing entries in main thread before re-mining
+                if rec is not None and _palace_delete:
                     for eid in rec.entry_ids:
                         try:
                             _palace_delete(eid)
                         except Exception:
                             pass
-                state.delete(rec.rel_path)
-                result.files_removed += 1
-        state.close()
 
-    # ── Remove placeholder entries from rooms that received no mined content ──
-    # Placeholder entries are created by init_palace() with source_file="".
-    # If a room's directory is now skipped (or was removed), its placeholder
-    # lingers. This pass deletes them so "pneuma status" reflects reality.
-    if not dry_run:
-        _purge_empty_code_rooms(seen_rooms)
+            tasks.append(_FileTask(
+                file_path=file_path,
+                rel_path=rel_path_norm,
+                ext=ext,
+                wing=wing,
+                room=room,
+                content=content,
+                mtime=mtime,
+                size=size,
+                top_level_dir=top_level_dir,
+            ))
 
-    # files_skipped = total of all skip reasons (binary, over-max-size, etc.)
-    result.files_skipped = sum(result.skip_reasons.values())
+        # ── Phase 2: process files in parallel ────────────────────────────────────
+        workers = max(1, config.workers)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_to_task = {
+                pool.submit(_mine_file_task, task, config, dry_run): task
+                for task in tasks
+            }
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    file_result = future.result()
+                except Exception as exc:
+                    result.errors.append(f"{task.rel_path}: {exc}")
+                    continue
 
-    return result
+                if dry_run:
+                    key = file_result.dry_route_key
+                    result.would_route[key] = result.would_route.get(key, 0) + file_result.dry_route_count
+
+                result.files_processed += 1
+                result.chunks_stored += file_result.chunks_stored
+                result.summaries_stored += file_result.summaries_stored
+                result.errors.extend(file_result.errors)
+
+                # State upsert in main thread (SQLite connection is not thread-safe)
+                if state is not None and file_result.entry_ids:
+                    try:
+                        state.upsert(
+                            rel_path=file_result.rel_path,
+                            content_hash=file_result.content_hash,
+                            mtime=file_result.mtime,
+                            entry_ids=file_result.entry_ids,
+                        )
+                    except Exception as exc:
+                        result.errors.append(f"{task.rel_path} (state): {exc}")
+
+                if progress_cb:
+                    progress_cb(result.files_processed, result.chunks_stored)
+
+        # ── Cleanup removed files ──────────────────────────────────────────────
+        if state is not None and not dry_run:
+            for rec in state.all_records():
+                if rec.rel_path not in seen_rel_paths:
+                    if _palace_delete:
+                        for eid in rec.entry_ids:
+                            try:
+                                _palace_delete(eid)
+                            except Exception:
+                                pass
+                    state.delete(rec.rel_path)
+                    result.files_removed += 1
+            state.close()
+
+        # ── Remove placeholder entries from rooms that received no mined content ──
+        # Placeholder entries are created by init_palace() with source_file="".
+        # If a room's directory is now skipped (or was removed), its placeholder
+        # lingers. This pass deletes them so "pneuma status" reflects reality.
+        if not dry_run:
+            _purge_empty_code_rooms(seen_rooms)
+
+        # files_skipped = total of all skip reasons (binary, over-max-size, etc.)
+        result.files_skipped = sum(result.skip_reasons.values())
+
+        return result
+
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 def _purge_empty_code_rooms(seen_rooms: set[str]) -> None:
